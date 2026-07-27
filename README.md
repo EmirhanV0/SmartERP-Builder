@@ -23,7 +23,7 @@ AI-powered ERP system generator. Users describe their business in natural langua
    ```
 
 2. **Edit `.env` and set:**
-   - `GEMINI_API_KEY` — your Google Gemini API key (from https://aistudio.google.com/apikey)
+   - `GEMINI_API_KEY` — your Google Gemini API key (from https://aistudio.google.com)
    - `ADMIN_EMAILS` — the email you will register as admin (e.g. your-email@example.com)
    - `SECRET_KEY` — a random secret, generate with:
 
