@@ -12,3 +12,13 @@ dist/
 *.iml
 .DS_Store
 postgres_data/
+
+# Environment variants (keep the template)
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Claude Code local settings
+.claude/
