@@ -1,11 +1,18 @@
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, Integer, String, Boolean, Float, ForeignKey, DateTime, Index, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.config.database import Base
+
+if TYPE_CHECKING:
+    # Imported only for type checking; SQLAlchemy resolves these by name at runtime.
+    from app.models.dynamic_record import AIAnalysisLog, DynamicRecord
+    from app.models.module import AvailableModule
+    from app.models.tenant import TenantProfile
 
 
 class Configuration(Base):

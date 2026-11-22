@@ -42,11 +42,11 @@ jobs:
       ADMIN_EMAILS: ci@example.com
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Same Python version as backend/Dockerfile (python:3.11-slim).
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -96,12 +96,12 @@ jobs:
         working-directory: frontend
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Same Node version as frontend/Dockerfile (node:18-alpine).
       # npm cache is not enabled because the repo has no package-lock.json.
       - name: Set up Node.js 18
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "18"
 
@@ -153,10 +153,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
