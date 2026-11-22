@@ -1,0 +1,237 @@
+# Continuous Integration for SmartERP Builder.
+# Runs three independent jobs in parallel:
+#   - backend:     lint for critical errors + verify all app modules import
+#   - frontend:    install dependencies + production build
+#   - integration: real PostgreSQL, migrations, API boot, register/login smoke test
+#
+# No GitHub Secrets are required: every credential below is a throwaway CI value.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same branch / PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Backend: static checks and import verification (no database needed)
+  # ---------------------------------------------------------------------------
+  backend:
+    name: Backend (lint + import)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Dummy settings so app.config.settings can be instantiated at import time.
+      SECRET_KEY: ci-test-secret
+      DATABASE_URL: postgresql+asyncpg://smarterp:ci-password@localhost:5432/smarterp_db
+      SYNC_DATABASE_URL: postgresql+psycopg2://smarterp:ci-password@localhost:5432/smarterp_db
+      GEMINI_API_KEY: dummy
+      GEMINI_MOCK: "true"
+      ADMIN_EMAILS: ci@example.com
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Same Python version as backend/Dockerfile (python:3.11-slim).
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt ruff
+
+      # Only critical errors: syntax errors, invalid comparisons,
+      # misplaced statements and undefined names.
+      - name: Lint with ruff (critical errors only)
+        run: ruff check . --select E9,F63,F7,F82
+
+      - name: Verify app modules import
+        run: |
+          python - <<'EOF'
+          import importlib
+          import pkgutil
+
+          import app
+          import app.main  # builds the FastAPI app and registers all routers
+
+          failed = []
+          for mod in pkgutil.walk_packages(app.__path__, prefix="app."):
+              try:
+                  importlib.import_module(mod.name)
+                  print(f"OK    {mod.name}")
+              except Exception as exc:
+                  failed.append(mod.name)
+                  print(f"FAIL  {mod.name}: {exc!r}")
+
+          if failed:
+              raise SystemExit(f"{len(failed)} module(s) failed to import")
+          print("All app modules imported successfully.")
+          EOF
+
+  # ---------------------------------------------------------------------------
+  # Frontend: production build
+  # ---------------------------------------------------------------------------
+  frontend:
+    name: Frontend (build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Same Node version as frontend/Dockerfile (node:18-alpine).
+      # npm cache is not enabled because the repo has no package-lock.json.
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      # No package-lock.json in the repo, so `npm ci` cannot be used.
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Integration: migrations + API smoke test against a real PostgreSQL
+  # ---------------------------------------------------------------------------
+  integration:
+    name: Integration (smoke test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      # Same image as docker-compose.yml.
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: smarterp
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: smarterp_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smarterp -d smarterp_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # CI-only throwaway values; nothing here is a real secret.
+      SECRET_KEY: ci-test-secret
+      POSTGRES_USER: smarterp
+      POSTGRES_PASSWORD: ci-password
+      POSTGRES_DB: smarterp_db
+      GEMINI_API_KEY: dummy
+      GEMINI_MOCK: "true"
+      ADMIN_EMAILS: ci@example.com
+      DATABASE_URL: postgresql+asyncpg://smarterp:ci-password@localhost:5432/smarterp_db
+      SYNC_DATABASE_URL: postgresql+psycopg2://smarterp:ci-password@localhost:5432/smarterp_db
+      API_URL: http://127.0.0.1:8000
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run database migrations
+        run: alembic upgrade head
+
+      - name: Start API server in background
+        run: |
+          nohup uvicorn app.main:app --host 127.0.0.1 --port 8000 > uvicorn.log 2>&1 &
+          echo "Started uvicorn (pid $!)"
+
+      - name: Wait for API to become ready
+        run: |
+          for endpoint in /docs /openapi.json; do
+            echo "Waiting for ${API_URL}${endpoint} ..."
+            ready=false
+            for i in $(seq 1 60); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" "${API_URL}${endpoint}" || true)
+              if [ "$code" = "200" ]; then
+                echo "${endpoint} returned 200 after ${i}s"
+                ready=true
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ready" != "true" ]; then
+              echo "Timed out waiting for ${endpoint} (last status: ${code})"
+              exit 1
+            fi
+          done
+
+      - name: Smoke test - register
+        run: |
+          code=$(curl -s -o register.json -w "%{http_code}" \
+            -X POST "${API_URL}/auth/register" \
+            -H "Content-Type: application/json" \
+            -d '{
+                  "email": "ci@example.com",
+                  "password": "ci-password-123",
+                  "full_name": "CI User",
+                  "company_name": "CI Company",
+                  "sector_code": "retail"
+                }')
+          echo "Response body:"; cat register.json; echo
+          if [ "$code" != "201" ]; then
+            echo "Expected 201 from /auth/register, got ${code}"
+            exit 1
+          fi
+
+      # /auth/login uses OAuth2PasswordRequestForm: form-encoded, email goes in "username".
+      - name: Smoke test - login
+        run: |
+          code=$(curl -s -o login.json -w "%{http_code}" \
+            -X POST "${API_URL}/auth/login" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "username=ci@example.com" \
+            --data-urlencode "password=ci-password-123")
+          if [ "$code" != "200" ]; then
+            echo "Expected 200 from /auth/login, got ${code}"
+            cat login.json; echo
+            exit 1
+          fi
+          if ! grep -q '"access_token"' login.json; then
+            echo "Login response does not contain an access_token"
+            exit 1
+          fi
+          echo "Login succeeded and returned an access token."
+
+      - name: Print uvicorn log on failure
+        if: failure()
+        run: cat uvicorn.log || echo "uvicorn.log not found"

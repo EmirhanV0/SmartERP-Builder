@@ -2,6 +2,7 @@
 
 > Describe your business in plain language and get a working, multi-tenant ERP in minutes.
 
+[![CI](https://github.com/EmirhanV0/SmartERP-Builder/actions/workflows/ci.yml/badge.svg)](https://github.com/EmirhanV0/SmartERP-Builder/actions/workflows/ci.yml)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/React_18-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL_15-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
